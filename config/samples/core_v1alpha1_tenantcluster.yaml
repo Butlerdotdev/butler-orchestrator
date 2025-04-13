@@ -1,0 +1,9 @@
+apiVersion: core.butler.sh/v1alpha1
+kind: TenantCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: butler-orchestrator
+    app.kubernetes.io/managed-by: kustomize
+  name: tenantcluster-sample
+spec:
+  # TODO(user): Add fields here
