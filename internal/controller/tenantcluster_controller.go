@@ -1,23 +1,8 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -42,7 +27,6 @@ const (
 	ConditionError       = "Error"
 )
 
-// TenantClusterReconciler reconciles a TenantCluster object
 type TenantClusterReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
@@ -67,7 +51,7 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Add finalizer if not present
+	// Add finalizer
 	if tenantCluster.ObjectMeta.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(&tenantCluster, tenantClusterFinalizer) {
 			controllerutil.AddFinalizer(&tenantCluster, tenantClusterFinalizer)
@@ -78,7 +62,7 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Info("Added finalizer")
 		}
 	} else {
-		// Deletion logic
+		// Handle deletion
 		log.Info("TenantCluster is being deleted")
 		controllerutil.RemoveFinalizer(&tenantCluster, tenantClusterFinalizer)
 		if err := r.Update(ctx, &tenantCluster); err != nil {
@@ -89,17 +73,16 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// Initialize phase if not set
 	if tenantCluster.Status.Phase == "" {
 		tenantCluster.Status.Phase = corev1alpha1.PhasePending
 		if err := r.Status().Update(ctx, &tenantCluster); err != nil {
 			log.Error(err, "Failed to initialize status.phase")
 			return ctrl.Result{}, err
 		}
-		log.Info("Initialized TenantCluster phase to Pending")
+		log.Info("Initialized phase to Pending")
 	}
 
-	// Resolve provider ref
+	// Resolve provider CR
 	providerRef := tenantCluster.Spec.Provider.Ref
 	provider := &unstructured.Unstructured{}
 	provider.SetAPIVersion(providerRef.APIVersion)
@@ -110,18 +93,34 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Namespace: tenantCluster.Namespace,
 	}
 
-	// Try to get provider CR
 	if err := r.Client.Get(ctx, namespacedName, provider); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("Provider CR not found, creating", "ref", providerRef)
 
-			provider.SetName(providerRef.Name)
-			provider.SetNamespace(tenantCluster.Namespace)
+			// Decode providerConfig to a map
+			// Decode providerConfig to a map
+			var providerSpec map[string]interface{}
+			if len(tenantCluster.Spec.ProviderConfig.Raw) > 0 {
+				if err := json.Unmarshal(tenantCluster.Spec.ProviderConfig.Raw, &providerSpec); err != nil {
+					log.Error(err, "Failed to decode providerConfig JSON into map")
+					r.Recorder.Event(&tenantCluster, "Warning", "InvalidProviderConfig", fmt.Sprintf("Unable to decode providerConfig: %v", err))
+					tenantCluster.Status.Phase = corev1alpha1.PhaseError
+					_ = r.Status().Update(ctx, &tenantCluster)
+					return ctrl.Result{}, err
+				}
+			} else {
+				providerSpec = map[string]interface{}{}
+			}
 
-			// Example default spec (override as needed)
-			_ = unstructured.SetNestedField(provider.Object, map[string]interface{}{
-				"replicas": 1,
-			}, "spec", "controlPlane")
+			provider.Object = map[string]interface{}{
+				"apiVersion": providerRef.APIVersion,
+				"kind":       providerRef.Kind,
+				"metadata": map[string]interface{}{
+					"name":      providerRef.Name,
+					"namespace": tenantCluster.Namespace,
+				},
+				"spec": providerSpec,
+			}
 
 			if err := r.Client.Create(ctx, provider); err != nil {
 				log.Error(err, "Failed to create provider CR", "ref", providerRef)
@@ -142,7 +141,7 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	log.Info("Successfully dereferenced provider CR", "ref", providerRef)
 
-	// Extract provider status.phase
+	// Read phase from provider.status.phase
 	providerStatusPhase, found, err := unstructured.NestedString(provider.Object, "status", "phase")
 	if err != nil || !found {
 		log.Info("Provider status.phase not available yet", "ref", providerRef)
@@ -151,7 +150,6 @@ func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	log.Info("Provider reported status.phase", "phase", providerStatusPhase)
 
-	// Map provider status.phase to orchestrator phase + condition
 	var conditionType string
 	var conditionStatus metav1.ConditionStatus
 	var reason string
