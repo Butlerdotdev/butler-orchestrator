@@ -33,10 +33,10 @@ type TenantClusterReconciler struct {
 	Recorder record.EventRecorder
 }
 
-//+kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters/finalizers,verbs=update
-//+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.butler.sh,resources=tenantclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;create
 
 func (r *TenantClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx).WithValues("tenantcluster", req.NamespacedName)
